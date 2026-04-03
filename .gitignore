@@ -1,0 +1,55 @@
+# Python bytecode and caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# ROS / colcon build outputs
+**/build/
+**/install/
+**/log/
+.colcon/
+
+# Local editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+
+# Environment files
+.env
+.env.local
+venv/
+env/
+ENV/
+
+# Common OS noise
+.DS_Store
+Thumbs.db
+.thumbsdb
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*~
+
+# Gazebo and ROS specific
+gazebo*
+.gazebo*
+
+# Vehicle simulator mesh files
+env_ws/src/vehicle_simulator/mesh/
