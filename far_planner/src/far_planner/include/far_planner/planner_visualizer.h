@@ -61,6 +61,13 @@ public:
 
     void VizViewpointExtend(const NavNodePtr& ori_nav_ptr, const Point3D& extend_point);
 
+    void VizLineSegment(const Point3D& start_point,
+                        const Point3D& end_point,
+                        const std::string& ns,
+                        const VizColor& color,
+                        const float scale=0.2f,
+                        const float alpha=0.9f);
+
     // True for non-attempts path
     void VizPath(const NodePtrStack& global_path, const bool& is_free_nav=false);
 
@@ -76,6 +83,8 @@ public:
                     const VizColor& color,
                     const float scale=1.0f,
                     const float alpha=0.9f);
+
+    void DeletePointMarker(const std::string& ns);
 
     void VizGraph(const NodePtrStack& graph);
 

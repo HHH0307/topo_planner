@@ -21,6 +21,9 @@ TeleopPanel::TeleopPanel( QWidget* parent )
   check_box_2_ = new QCheckBox( "Update Visibility Graph", this );
   check_box_2_->setCheckState( Qt::Checked );
   layout->addWidget( check_box_2_ );
+  check_box_3_ = new QCheckBox( "Auto Explore", this );
+  check_box_3_->setCheckState( Qt::Unchecked );
+  layout->addWidget( check_box_3_ );
   push_button_1_ = new QPushButton( "Reset Visibility Graph", this );
   layout->addWidget( push_button_1_ );
   push_button_2_ = new QPushButton( "Resume Navigation to Goal", this );
@@ -41,6 +44,7 @@ TeleopPanel::TeleopPanel( QWidget* parent )
   connect( push_button_4_, SIGNAL( pressed() ), this, SLOT( pressButton4() ));
   connect( check_box_1_, SIGNAL( stateChanged(int) ), this, SLOT( clickBox1(int) ));
   connect( check_box_2_, SIGNAL( stateChanged(int) ), this, SLOT( clickBox2(int) ));
+  connect( check_box_3_, SIGNAL( stateChanged(int) ), this, SLOT( clickBox3(int) ));
   connect( drive_widget_, SIGNAL( outputVelocity( float, float, bool )), this, SLOT( setVel( float, float, bool )));
   connect( output_timer, SIGNAL( timeout() ), this, SLOT( sendVel() ));
 
@@ -49,6 +53,7 @@ TeleopPanel::TeleopPanel( QWidget* parent )
   velocity_publisher_ = node_->create_publisher<sensor_msgs::msg::Joy>("/joy", 5);
   attemptable_publisher_ = node_->create_publisher<std_msgs::msg::Bool>("/planning_attemptable", 5);
   update_publisher_ = node_->create_publisher<std_msgs::msg::Bool>("/update_visibility_graph", 5);
+  auto_explore_publisher_ = node_->create_publisher<std_msgs::msg::Bool>("/enable_auto_explore", 5);
   reset_publisher_ = node_->create_publisher<std_msgs::msg::Empty>("/reset_visibility_graph", 5);
   read_publisher_ = node_->create_publisher<std_msgs::msg::String>("/read_file_dir", 5);
   save_publisher_ = node_->create_publisher<std_msgs::msg::String>("/save_file_dir", 5);
@@ -149,6 +154,16 @@ void TeleopPanel::clickBox2(int val)
     std_msgs::msg::Bool msg;
     msg.data = bool(val);
     update_publisher_->publish(msg);
+  }
+}
+
+void TeleopPanel::clickBox3(int val)
+{
+  if (rclcpp::ok() && auto_explore_publisher_->get_subscription_count() > 0)
+  {
+    std_msgs::msg::Bool msg;
+    msg.data = bool(val);
+    auto_explore_publisher_->publish(msg);
   }
 }
 

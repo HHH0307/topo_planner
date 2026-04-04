@@ -61,6 +61,15 @@ void DPVisualizer::VizPoint3D(const Point3D& point,
     marker_set_.insert(node_marker);
 }
 
+void DPVisualizer::DeletePointMarker(const std::string& ns)
+{
+    Marker node_marker;
+    node_marker.type = Marker::SPHERE;
+    this->SetMarker(nh_, VizColor::WHITE, ns, 1.0f, 1.0f, node_marker);
+    node_marker.action = Marker::DELETE;
+    marker_set_.insert(node_marker);
+}
+
 void DPVisualizer::VizPath(const NodePtrStack& global_path, const bool& is_free_nav) {
     Marker path_marker;
     path_marker.type = Marker::LINE_STRIP;
@@ -72,6 +81,21 @@ void DPVisualizer::VizPath(const NodePtrStack& global_path, const bool& is_free_
         path_marker.points.push_back(geo_p);
     }
     viz_path_pub_->publish(path_marker);
+}
+
+void DPVisualizer::VizLineSegment(const Point3D& start_point,
+                                  const Point3D& end_point,
+                                  const std::string& ns,
+                                  const VizColor& color,
+                                  const float scale,
+                                  const float alpha)
+{
+    Marker line_marker;
+    line_marker.type = Marker::LINE_STRIP;
+    this->SetMarker(nh_, color, ns, scale, alpha, line_marker);
+    line_marker.points.push_back(FARUtil::Point3DToGeoMsgPoint(start_point));
+    line_marker.points.push_back(FARUtil::Point3DToGeoMsgPoint(end_point));
+    viz_path_pub_->publish(line_marker);
 }
 
 void DPVisualizer::VizViewpointExtend(const NavNodePtr& ori_nav_ptr, const Point3D& extend_point) {
@@ -265,6 +289,9 @@ void DPVisualizer::VizGraph(const NodePtrStack& graph) {
         p1 = FARUtil::Point3DToGeoMsgPoint(node_ptr->position);
         // navigable vgraph
         for (const auto& cnode : node_ptr->connect_nodes) {
+            if (FARUtil::IsOutsideGoal(node_ptr) || FARUtil::IsOutsideGoal(cnode)) {
+                continue;
+            }
             if (node_ptr->is_boundary && cnode->is_boundary &&  
                 node_ptr->invalid_boundary.find(cnode->id) != node_ptr->invalid_boundary.end()) 
             {

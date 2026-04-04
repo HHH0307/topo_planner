@@ -10,6 +10,7 @@
 #include "planner_visualizer.h"
 #include "scan_handler.h"
 #include "graph_msger.h"
+#include "auto_explore.h"
 
 
 struct FARMasterParams {
@@ -29,6 +30,11 @@ struct FARMasterParams {
     bool  is_pub_boundary;
     bool  is_debug_output;
     bool  is_attempt_autoswitch;
+    bool  is_enable_auto_explore;
+    float auto_explore_min_frontier_dist;
+    float auto_explore_min_goal_separation;
+    bool  auto_explore_stop_when_completed;
+    int   auto_explore_no_frontier_limit;
     std::string world_frame;
 };
 
@@ -53,6 +59,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr scan_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr waypoint_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr read_command_sub_, save_command_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr auto_explore_command_sub_;
 
     rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr goal_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PolygonStamped>::SharedPtr boundary_pub_;
@@ -60,6 +67,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr planning_time_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr traverse_time_pub_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr reach_goal_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr auto_explore_completed_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr dynamic_obs_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr surround_free_debug_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr surround_obs_debug_;
@@ -81,6 +89,8 @@ private:
 
     bool is_cloud_init_, is_scan_init_, is_odom_init_, is_planner_running_;
     bool is_graph_init_;
+    bool is_auto_goal_active_;
+    int auto_explore_no_frontier_counter_;
 
     PointCloudPtr new_vertices_ptr_;
     PointCloudPtr temp_obs_ptr_;
@@ -116,6 +126,8 @@ private:
     MapHandler map_handler_;
     ScanHandler scan_handler_;
     GraphMsger graph_msger_;
+    AutoExplore auto_explore_;
+    AutoExploreParams auto_explore_params_;
 
     /* ROS Params */
     FARMasterParams     master_params_;
@@ -170,6 +182,22 @@ private:
             if (FARUtil::IsDebug) RCLCPP_WARN(nh_->get_logger(), "FARMaster: Stop visibility graph update.");
             is_stop_update_ = !msg->data;
         }   
+    }
+
+    inline void AutoExploreCommandCallBack(const std_msgs::msg::Bool::SharedPtr msg) {
+        const bool old_state = master_params_.is_enable_auto_explore;
+        master_params_.is_enable_auto_explore = msg->data;
+        auto_explore_no_frontier_counter_ = 0;
+        if (master_params_.is_enable_auto_explore) {
+            auto_explore_.Reset();
+        }
+        if (old_state != master_params_.is_enable_auto_explore) {
+            if (master_params_.is_enable_auto_explore) {
+                RCLCPP_INFO(nh_->get_logger(), "FARMaster: auto exploration enabled.");
+            } else {
+                RCLCPP_INFO(nh_->get_logger(), "FARMaster: auto exploration disabled.");
+            }
+        }
     }
 
     inline void FakeTerminalInit() {

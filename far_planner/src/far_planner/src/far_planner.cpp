@@ -31,6 +31,7 @@ void FARMaster::Init() {
   terrain_local_sub_  = nh_->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_local_cloud", 1, std::bind(&FARMaster::TerrainLocalCallBack, this, std::placeholders::_1));
   joy_command_sub_    = nh_->create_subscription<sensor_msgs::msg::Joy>("/joy", 5, std::bind(&FARMaster::JoyCommandCallBack, this, std::placeholders::_1));
   update_command_sub_ = nh_->create_subscription<std_msgs::msg::Bool>("/update_visibility_graph", 5, std::bind(&FARMaster::UpdateCommandCallBack, this, std::placeholders::_1));
+  auto_explore_command_sub_ = nh_->create_subscription<std_msgs::msg::Bool>("/enable_auto_explore", 5, std::bind(&FARMaster::AutoExploreCommandCallBack, this, std::placeholders::_1));
   goal_pub_           = nh_->create_publisher<geometry_msgs::msg::PointStamped>("/way_point",5);
   boundary_pub_       = nh_->create_publisher<geometry_msgs::msg::PolygonStamped>("/navigation_boundary",5);
 
@@ -41,6 +42,7 @@ void FARMaster::Init() {
 
   // planning status publisher
   reach_goal_pub_     = nh_->create_publisher<std_msgs::msg::Bool>("/far_reach_goal_status", 5);
+  auto_explore_completed_pub_ = nh_->create_publisher<std_msgs::msg::Bool>("/far_auto_explore_completed", 5);
 
   // Terminal formatting subscriber
   read_command_sub_   = nh_->create_subscription<std_msgs::msg::String>("/read_file_dir", 1, std::bind(&FARMaster::ReadFileCommand, this, std::placeholders::_1));
@@ -79,6 +81,7 @@ void FARMaster::Init() {
   map_handler_.Init(map_params_);
   scan_handler_.Init(scan_params_);
   graph_msger_.Init(nh_, msger_parmas_);
+  auto_explore_.Init(auto_explore_params_);
 
   //print processing objects init complete
   RCLCPP_INFO(nh_->get_logger(), "FAR Planner Processing Objects Initiated");
@@ -93,6 +96,8 @@ void FARMaster::Init() {
   is_reset_env_       = false;
   is_stop_update_     = false;
   is_init_completed_  = false;
+  is_auto_goal_active_ = false;
+  auto_explore_no_frontier_counter_ = 0;
 
   // allocate memory to pointers
   new_vertices_ptr_     = PointCloudPtr(new pcl::PointCloud<PCLPoint>());
@@ -142,6 +147,9 @@ void FARMaster::Init() {
 
 void FARMaster::ResetEnvironmentAndGraph() {
   this->ResetInternalValues();
+  auto_explore_.Reset();
+  is_auto_goal_active_ = false;
+  auto_explore_no_frontier_counter_ = 0;
   if (!FARUtil::IsDebug) { // Terminal Output
     printf("\033[A"), printf("\033[A"), printf("\033[2K");
     std::cout<< "\033[1;31m V-Graph Resetting...\033[0m\n" << std::endl;
@@ -272,14 +280,49 @@ void FARMaster::MainLoopCallBack() {
 
 void FARMaster::PlanningCallBack() {
   if (!is_init_completed_ || !is_graph_init_) return;
+  planner_viz_.DeletePointMarker("original_goal");
+  auto BuildAutoExploreCandidates = [&]() {
+    NodePtrStack candidate_nodes;
+    for (const auto& node_ptr : nav_graph_) {
+      if (node_ptr == NULL || node_ptr->is_odom) continue;
+      if (!node_ptr->is_frontier || !node_ptr->is_traversable) continue;
+      const float dist_to_robot = (node_ptr->position - odom_node_ptr_->position).norm_flat();
+      if (dist_to_robot < auto_explore_params_.min_frontier_dist) continue;
+      candidate_nodes.push_back(node_ptr);
+    }
+    return candidate_nodes;
+  };
   const NavNodePtr goal_ptr = graph_planner_.GetGoalNodePtr();
   if (goal_ptr == NULL) {
     /* Graph Traversablity Update */
     if (!FARUtil::IsDebug) printf("\033[2K");
     std::cout<<"    "<<"Adding Goal to V-Graph "<<"Time: "<<0.f<<"ms"<<std::endl;
     graph_planner_.UpdateGraphTraverability(odom_node_ptr_, NULL);
+    const NodePtrStack candidate_nodes = BuildAutoExploreCandidates();
+    planner_viz_.VizNodes(candidate_nodes, "auto_explore_candidates", VizColor::PURPLE, 0.95f, 1.0f);
     if (!FARUtil::IsDebug) printf("\033[2K");
     std::cout<<"    "<<"Path Search "<<"Time: "<<0.f<<"ms"<<std::endl;
+    if (master_params_.is_enable_auto_explore && !auto_explore_.IsCompleted()) {
+      Point3D auto_goal;
+      if (auto_explore_.SelectGoalFromFrontier(nav_graph_, odom_node_ptr_, auto_goal)) {
+        graph_planner_.UpdateGoal(auto_goal);
+        FARUtil::Timer.start_time("Overall_executing", true);
+        is_auto_goal_active_ = true;
+        auto_explore_no_frontier_counter_ = 0;
+      } else {
+        auto_explore_no_frontier_counter_++;
+        if (master_params_.auto_explore_stop_when_completed &&
+            auto_explore_no_frontier_counter_ >= master_params_.auto_explore_no_frontier_limit) {
+          master_params_.is_enable_auto_explore = false;
+          is_auto_goal_active_ = false;
+          auto_explore_no_frontier_counter_ = 0;
+          RCLCPP_INFO(nh_->get_logger(), "FARMaster: auto exploration completed (no reachable frontier), auto mode disabled.");
+        }
+      }
+    }
+    auto auto_explore_completed_msg = std_msgs::msg::Bool();
+    auto_explore_completed_msg.data = auto_explore_.IsCompleted();
+    auto_explore_completed_pub_->publish(auto_explore_completed_msg);
   } else { 
     // Update goal postion with nearby terrain cloud
     const Point3D ori_p = graph_planner_.GetOriginNodePos(true);
@@ -300,6 +343,8 @@ void FARMaster::PlanningCallBack() {
     // Update v-graph traversibility 
     FARUtil::Timer.start_time("Path Search");
     graph_planner_.UpdateGraphTraverability(odom_node_ptr_, goal_ptr);
+    const NodePtrStack candidate_nodes = BuildAutoExploreCandidates();
+    planner_viz_.VizNodes(candidate_nodes, "auto_explore_candidates", VizColor::PURPLE, 0.95f, 1.0f);
 
     // Construct path to gaol and publish waypoint
     NodePtrStack global_path;
@@ -310,6 +355,16 @@ void FARMaster::PlanningCallBack() {
     bool is_current_free_nav = false;
     bool is_reach_goal = false;
     if (graph_planner_.PathToGoal(goal_ptr, global_path, nav_node_ptr_, current_free_goal, is_planning_fails, is_reach_goal, is_current_free_nav) && nav_node_ptr_ != NULL) {
+      NodePtrStack display_path = global_path;
+      while (display_path.size() > 1 && FARUtil::IsOutsideGoal(display_path.back())) {
+        display_path.pop_back();
+      }
+      for (std::size_t i = 0; i < display_path.size(); i++) {
+        if (display_path[i] == nav_node_ptr_) {
+          display_path.resize(i + 1);
+          break;
+        }
+      }
       Point3D waypoint = nav_node_ptr_->position;
       if (nav_node_ptr_ != goal_ptr) {
         waypoint = this->ProjectNavWaypoint(nav_node_ptr_, last_nav_ptr);
@@ -320,8 +375,8 @@ void FARMaster::PlanningCallBack() {
       goal_pub_->publish(goal_waypoint_stamped_);
       is_planner_running_ = true;
       planner_viz_.VizPoint3D(waypoint, "waypoint", VizColor::MAGNA, 1.5);
-      planner_viz_.VizPoint3D(current_free_goal, "free_goal", VizColor::GREEN, 1.5);
-      planner_viz_.VizPath(global_path, is_current_free_nav);
+      planner_viz_.VizLineSegment(robot_pos_, current_free_goal, "free_goal_line", VizColor::GREEN, 0.18f, 0.9f);
+      planner_viz_.VizPath(display_path, is_current_free_nav);
     } else if (is_planner_running_) { // stop robot
       global_path.clear();
       planner_viz_.VizPath(global_path);
@@ -332,12 +387,20 @@ void FARMaster::PlanningCallBack() {
         goal_pub_->publish(goal_waypoint_stamped_);
       }
     }
+    if (is_reach_goal || is_planning_fails) {
+      is_auto_goal_active_ = false;
+      auto_explore_no_frontier_counter_ = 0;
+      auto_explore_.ClearActiveGoal();
+    }
     if (!FARUtil::IsDebug) printf("\033[2K");
 
     // publish planner status and timers
     auto reach_goal_msg = std_msgs::msg::Bool();
     reach_goal_msg.data = is_reach_goal;
     reach_goal_pub_->publish(reach_goal_msg);
+    auto auto_explore_completed_msg = std_msgs::msg::Bool();
+    auto_explore_completed_msg.data = auto_explore_.IsCompleted();
+    auto_explore_completed_pub_->publish(auto_explore_completed_msg);
     auto traverse_timer = std_msgs::msg::Float32();
     traverse_timer.data = FARUtil::Timer.record_time("Overall_executing");
     traverse_time_pub_->publish(traverse_timer);
@@ -478,6 +541,11 @@ void FARMaster::LoadROSParams() {
   nh_->declare_parameter<bool>("is_pub_boundary", true);
   nh_->declare_parameter<bool>("is_debug_output", false);
   nh_->declare_parameter<bool>("is_attempt_autoswitch", true);
+  nh_->declare_parameter<bool>("is_enable_auto_explore", false);
+  nh_->declare_parameter<float>("auto_explore_min_frontier_dist", 2.0);
+  nh_->declare_parameter<float>("auto_explore_min_goal_separation", 1.0);
+  nh_->declare_parameter<bool>("auto_explore_stop_when_completed", true);
+  nh_->declare_parameter<int>("auto_explore_no_frontier_limit", 15);
   nh_->declare_parameter<std::string>("world_frame", "map");
   
   // Get parameters
@@ -496,8 +564,20 @@ void FARMaster::LoadROSParams() {
   nh_->get_parameter("is_pub_boundary", master_params_.is_pub_boundary);
   nh_->get_parameter("is_debug_output", master_params_.is_debug_output);
   nh_->get_parameter("is_attempt_autoswitch", master_params_.is_attempt_autoswitch);
+  nh_->get_parameter("is_enable_auto_explore", master_params_.is_enable_auto_explore);
+  nh_->get_parameter("auto_explore_min_frontier_dist", master_params_.auto_explore_min_frontier_dist);
+  nh_->get_parameter("auto_explore_min_goal_separation", master_params_.auto_explore_min_goal_separation);
+  nh_->get_parameter("auto_explore_stop_when_completed", master_params_.auto_explore_stop_when_completed);
+  nh_->get_parameter("auto_explore_no_frontier_limit", master_params_.auto_explore_no_frontier_limit);
   nh_->get_parameter<std::string>("world_frame", master_params_.world_frame);
   master_params_.terrain_range = std::min(master_params_.terrain_range, master_params_.sensor_range);
+
+  if (master_params_.auto_explore_no_frontier_limit < 1) {
+    master_params_.auto_explore_no_frontier_limit = 1;
+  }
+
+  auto_explore_params_.min_frontier_dist = master_params_.auto_explore_min_frontier_dist;
+  auto_explore_params_.min_goal_separation = master_params_.auto_explore_min_goal_separation;
 
   // print voxel_dim paramter in ROS2
   RCLCPP_INFO(nh_->get_logger(), "voxel_dim: %f", master_params_.voxel_dim);
@@ -813,9 +893,9 @@ void FARMaster::WaypointCallBack(const geometry_msgs::msg::PointStamped& route_g
     FARUtil::TransformPoint3DFrame(goal_frame, master_params_.world_frame, tf_buffer_, goal_p); 
   }
   graph_planner_.UpdateGoal(goal_p);
+  auto_explore_.ClearActiveGoal();
+  is_auto_goal_active_ = false;
   FARUtil::Timer.start_time("Overall_executing", true);
-  // visualize original goal
-  planner_viz_.VizPoint3D(goal_p, "original_goal", VizColor::RED, 1.5);
 }
 
 /* allocate static utility PointCloud pointer memory */

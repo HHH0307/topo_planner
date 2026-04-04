@@ -317,24 +317,24 @@ NavNodePtr GraphPlanner::NextNavWaypointFromPath(const NodePtrStack& global_path
 
 void GraphPlanner::UpdateGoal(const Point3D& goal) {
     this->GoalReset();
-    is_use_internav_goal_ = false;
-    float min_dist = FARUtil::kNearDist;
+    is_use_internav_goal_ = true;
+    float min_dist = FARUtil::kINF;
+    goal_node_ptr_ = NULL;
     for (const auto& node_ptr : current_graph_) {
         node_ptr->is_block_to_goal = false;
-        if (node_ptr->is_navpoint) { // check if goal is near internav node
-            const float cur_dist = (node_ptr->position - goal).norm();
-            if (cur_dist < min_dist) {
-                is_use_internav_goal_   = true;
-                goal_node_ptr_          = node_ptr;
-                min_dist                = cur_dist;
-                goal_node_ptr_->is_goal = true;
-            }
+        if (node_ptr->is_odom) continue;
+        const float cur_dist = (node_ptr->position - goal).norm();
+        if (cur_dist < min_dist) {
+            goal_node_ptr_ = node_ptr;
+            min_dist = cur_dist;
         }
     }
-    if (!is_use_internav_goal_) {
-        DynamicGraph::CreateNavNodeFromPoint(goal, goal_node_ptr_, false, false, true);
-        DynamicGraph::AddNodeToGraph(goal_node_ptr_);
+    if (goal_node_ptr_ == NULL) {
+        RCLCPP_ERROR(nh_->get_logger(), "GP: no valid graph node to assign as goal.");
+        is_goal_init_ = false;
+        return;
     }
+    goal_node_ptr_->is_goal = true;
     if (FARUtil::IsDebug) RCLCPP_INFO(nh_->get_logger(), "GP: *********** new goal updated ***********");
     is_goal_init_          = true;
     is_global_path_init_   = false;

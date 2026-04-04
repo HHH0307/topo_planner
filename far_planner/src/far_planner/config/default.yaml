@@ -16,6 +16,11 @@ far_planner:
     is_pub_boundary: false
     is_debug_output: false
     is_attempt_autoswitch: true  # Auto switch to attemptable navigation
+    is_enable_auto_explore: false
+    auto_explore_min_frontier_dist: 2.0
+    auto_explore_min_goal_separation: 1.0
+    auto_explore_stop_when_completed: true
+    auto_explore_no_frontier_limit: 15
     world_frame: map
 
     # Graph Messager

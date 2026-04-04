@@ -46,6 +46,7 @@ protected Q_SLOTS:
   void pressButton4();
   void clickBox1(int val);
   void clickBox2(int val);
+  void clickBox3(int val);
   void sendVel();
 
 protected:
@@ -55,6 +56,7 @@ protected:
   rclcpp::Publisher<sensor_msgs::msg::Joy>::SharedPtr velocity_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr attemptable_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr update_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr auto_explore_publisher_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr reset_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr read_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr save_publisher_;
@@ -69,6 +71,7 @@ protected:
   QPushButton *push_button_4_;
   QCheckBox *check_box_1_;
   QCheckBox *check_box_2_;
+  QCheckBox *check_box_3_;
 
   float linear_velocity_;
   float angular_velocity_;

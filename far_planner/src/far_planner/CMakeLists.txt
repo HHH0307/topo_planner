@@ -62,6 +62,7 @@ set(SOURCES ${SOURCES}
   src/scan_handler.cpp
   src/graph_msger.cpp
   src/terrain_planner.cpp
+  src/auto_explore.cpp
 )
 
 add_executable(${PROJECT_NAME} src/far_planner.cpp ${SOURCES})
