@@ -190,6 +190,14 @@ private:
         auto_explore_no_frontier_counter_ = 0;
         if (master_params_.is_enable_auto_explore) {
             auto_explore_.Reset();
+        } else {
+            // 修改日期：2026-04-24，关闭自主探索时立即发布停车点并清空当前目标。
+            goal_waypoint_stamped_.header.stamp = nh_->now();
+            goal_waypoint_stamped_.point = FARUtil::Point3DToGeoMsgPoint(robot_pos_);
+            goal_pub_->publish(goal_waypoint_stamped_);
+            graph_planner_.ResetPlannerInternalValues();
+            is_auto_goal_active_ = false;
+            auto_explore_.ClearActiveGoal();
         }
         if (old_state != master_params_.is_enable_auto_explore) {
             if (master_params_.is_enable_auto_explore) {

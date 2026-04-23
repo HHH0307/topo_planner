@@ -303,20 +303,26 @@ void FARMaster::PlanningCallBack() {
     if (!FARUtil::IsDebug) printf("\033[2K");
     std::cout<<"    "<<"Path Search "<<"Time: "<<0.f<<"ms"<<std::endl;
     if (master_params_.is_enable_auto_explore && !auto_explore_.IsCompleted()) {
-      Point3D auto_goal;
-      if (auto_explore_.SelectGoalFromFrontier(nav_graph_, odom_node_ptr_, auto_goal)) {
-        graph_planner_.UpdateGoal(auto_goal);
+      if (is_auto_goal_active_ && auto_explore_.HasActiveGoal()) {
+        // 修改日期：2026-04-24，自主探索目标未到达前保持同一目标，避免 A/B 来回切换。
+        graph_planner_.UpdateGoal(auto_explore_.GetLastGoalPos());
         FARUtil::Timer.start_time("Overall_executing", true);
-        is_auto_goal_active_ = true;
-        auto_explore_no_frontier_counter_ = 0;
       } else {
-        auto_explore_no_frontier_counter_++;
-        if (master_params_.auto_explore_stop_when_completed &&
-            auto_explore_no_frontier_counter_ >= master_params_.auto_explore_no_frontier_limit) {
-          master_params_.is_enable_auto_explore = false;
-          is_auto_goal_active_ = false;
+        Point3D auto_goal;
+        if (auto_explore_.SelectGoalFromFrontier(nav_graph_, odom_node_ptr_, auto_goal)) {
+          graph_planner_.UpdateGoal(auto_goal);
+          FARUtil::Timer.start_time("Overall_executing", true);
+          is_auto_goal_active_ = true;
           auto_explore_no_frontier_counter_ = 0;
-          RCLCPP_INFO(nh_->get_logger(), "FARMaster: auto exploration completed (no reachable frontier), auto mode disabled.");
+        } else {
+          auto_explore_no_frontier_counter_++;
+          if (master_params_.auto_explore_stop_when_completed &&
+              auto_explore_no_frontier_counter_ >= master_params_.auto_explore_no_frontier_limit) {
+            master_params_.is_enable_auto_explore = false;
+            is_auto_goal_active_ = false;
+            auto_explore_no_frontier_counter_ = 0;
+            RCLCPP_INFO(nh_->get_logger(), "FARMaster: auto exploration completed (no reachable frontier), auto mode disabled.");
+          }
         }
       }
     }
@@ -387,7 +393,7 @@ void FARMaster::PlanningCallBack() {
         goal_pub_->publish(goal_waypoint_stamped_);
       }
     }
-    if (is_reach_goal || is_planning_fails) {
+    if (is_reach_goal || (is_planning_fails && !master_params_.is_enable_auto_explore)) {
       is_auto_goal_active_ = false;
       auto_explore_no_frontier_counter_ = 0;
       auto_explore_.ClearActiveGoal();
@@ -892,6 +898,7 @@ void FARMaster::WaypointCallBack(const geometry_msgs::msg::PointStamped& route_g
     if (FARUtil::IsDebug) RCLCPP_WARN_ONCE(nh_->get_logger(), "FARMaster: waypoint published is not on world frame!");
     FARUtil::TransformPoint3DFrame(goal_frame, master_params_.world_frame, tf_buffer_, goal_p); 
   }
+
   graph_planner_.UpdateGoal(goal_p);
   auto_explore_.ClearActiveGoal();
   is_auto_goal_active_ = false;

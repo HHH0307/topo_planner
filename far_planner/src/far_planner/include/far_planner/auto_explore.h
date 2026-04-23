@@ -34,6 +34,7 @@ public:
 
 	inline bool IsCompleted() const { return is_completed_; }
 	inline bool HasActiveGoal() const { return has_active_goal_; }
+	inline Point3D GetLastGoalPos() const { return last_goal_pos_; }
 	inline void ClearActiveGoal() { has_active_goal_ = false; }
 	inline void MarkGoalSelected(const Point3D& goal) {
 		has_last_goal_ = true;

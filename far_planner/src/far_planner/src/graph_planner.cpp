@@ -317,29 +317,25 @@ NavNodePtr GraphPlanner::NextNavWaypointFromPath(const NodePtrStack& global_path
 
 void GraphPlanner::UpdateGoal(const Point3D& goal) {
     this->GoalReset();
-    is_use_internav_goal_ = true;
-    float min_dist = FARUtil::kINF;
-    goal_node_ptr_ = NULL;
-    for (const auto& node_ptr : current_graph_) {
-        node_ptr->is_block_to_goal = false;
-        if (node_ptr->is_odom) continue;
-        const float cur_dist = (node_ptr->position - goal).norm();
-        if (cur_dist < min_dist) {
-            goal_node_ptr_ = node_ptr;
-            min_dist = cur_dist;
-        }
-    }
-    if (goal_node_ptr_ == NULL) {
-        RCLCPP_ERROR(nh_->get_logger(), "GP: no valid graph node to assign as goal.");
+    is_use_internav_goal_ = false;
+    if (current_graph_.empty()) {
+        RCLCPP_ERROR(nh_->get_logger(), "GP: current graph is empty, cannot assign goal.");
         is_goal_init_ = false;
         return;
     }
+
+    for (const auto& node_ptr : current_graph_) {
+        node_ptr->is_block_to_goal = false;
+    }
+
+    // 修改日期：2026-04-24，手动/自主目标均保持为用户发布的 goalpoint，禁止吸附到最近导航点。
+    DynamicGraph::CreateNavNodeFromPoint(goal, goal_node_ptr_, false, false, true, false);
     goal_node_ptr_->is_goal = true;
     if (FARUtil::IsDebug) RCLCPP_INFO(nh_->get_logger(), "GP: *********** new goal updated ***********");
     is_goal_init_          = true;
     is_global_path_init_   = false;
     is_terrain_associated_ = false;
-    origin_goal_pos_       = goal_node_ptr_->position;
+    origin_goal_pos_       = goal;
     is_free_nav_goal_      = command_is_free_nav_;
     next_waypoint_         = Point3D(0,0,0);
     last_waypoint_dist_    = 0.0f;
