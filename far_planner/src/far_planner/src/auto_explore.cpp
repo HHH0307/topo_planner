@@ -24,7 +24,7 @@ bool AutoExplore::SelectCandidate(const NodePtrStack& nav_graph,
 		if (dist_to_robot < params_.min_frontier_dist) continue;
 		if (avoid_last_goal && has_last_goal_ && (node_ptr->position - last_goal_pos_).norm_flat() < params_.min_goal_separation) continue;
 
-		// Prefer farther reachable frontier nodes by using traversed graph distance.
+		// 优先选择距离机器人更远的可到达点位。
 		float score = node_ptr->gscore;
 		if (score >= FARUtil::kINF / 2.0f) {
 			score = dist_to_robot;
@@ -45,7 +45,7 @@ bool AutoExplore::SelectGoalFromFrontier(const NodePtrStack& nav_graph,
 										 Point3D& goal_out)
 {
 	if (is_completed_) return false;
-	// Try to avoid selecting a goal too close to the previous one; relax if no candidate exists.
+	// 尽量避免选取与上一个目标距离过近的点位；若无可用候选目标，则放宽筛选约束。
 	if (!this->SelectCandidate(nav_graph, odom_node_ptr, true, goal_out)) {
 		if (!this->SelectCandidate(nav_graph, odom_node_ptr, false, goal_out)) {
 			is_completed_ = true;
