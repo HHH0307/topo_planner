@@ -281,6 +281,8 @@ void FARMaster::MainLoopCallBack() {
 void FARMaster::PlanningCallBack() {
   if (!is_init_completed_ || !is_graph_init_) return;
   planner_viz_.DeletePointMarker("original_goal");
+
+  // ── 辅助 lambda：收集当前可视化候选前沿节点
   auto BuildAutoExploreCandidates = [&]() {
     NodePtrStack candidate_nodes;
     for (const auto& node_ptr : nav_graph_) {
@@ -292,6 +294,25 @@ void FARMaster::PlanningCallBack() {
     }
     return candidate_nodes;
   };
+
+  // ── 自主探索状态预处理（超时/到达检测，在 goal_ptr 判断之前执行）
+  if (master_params_.is_enable_auto_explore && is_auto_goal_active_) {
+    // 1. 到达检测：机器人已非常靠近当前自主探索目标
+    if (auto_explore_.CheckGoalReached(robot_pos_)) {
+      if (FARUtil::IsDebug) RCLCPP_INFO(nh_->get_logger(), "AutoExplore: goal reached, selecting next frontier.");
+      is_auto_goal_active_ = false;
+      auto_explore_no_frontier_counter_ = 0;
+      graph_planner_.ResetPlannerInternalValues(); // 清除当前 goal_ptr
+    }
+    // 2. 超时检测：长时间无法到达，放弃当前目标
+    else if (auto_explore_.CheckAndHandleGoalTimeout(robot_pos_)) {
+      RCLCPP_WARN(nh_->get_logger(), "AutoExplore: goal timeout, switching to next frontier.");
+      is_auto_goal_active_ = false;
+      auto_explore_no_frontier_counter_ = 0;
+      graph_planner_.ResetPlannerInternalValues();
+    }
+  }
+
   const NavNodePtr goal_ptr = graph_planner_.GetGoalNodePtr();
   if (goal_ptr == NULL) {
     /* Graph Traversablity Update */
@@ -302,12 +323,13 @@ void FARMaster::PlanningCallBack() {
     planner_viz_.VizNodes(candidate_nodes, "auto_explore_candidates", VizColor::PURPLE, 0.95f, 1.0f);
     if (!FARUtil::IsDebug) printf("\033[2K");
     std::cout<<"    "<<"Path Search "<<"Time: "<<0.f<<"ms"<<std::endl;
-    if (master_params_.is_enable_auto_explore && !auto_explore_.IsCompleted()) {
+    if (master_params_.is_enable_auto_explore) {
       if (is_auto_goal_active_ && auto_explore_.HasActiveGoal()) {
-        // 修改日期：2026-04-24，自主探索目标未到达前保持同一目标，避免 A/B 来回切换。
+        // 目标未到达/未超时，保持同一目标
         graph_planner_.UpdateGoal(auto_explore_.GetLastGoalPos());
         FARUtil::Timer.start_time("Overall_executing", true);
       } else {
+        // 选取新前沿目标
         Point3D auto_goal;
         if (auto_explore_.SelectGoalFromFrontier(nav_graph_, odom_node_ptr_, auto_goal)) {
           graph_planner_.UpdateGoal(auto_goal);
@@ -552,6 +574,12 @@ void FARMaster::LoadROSParams() {
   nh_->declare_parameter<float>("auto_explore_min_goal_separation", 1.0);
   nh_->declare_parameter<bool>("auto_explore_stop_when_completed", true);
   nh_->declare_parameter<int>("auto_explore_no_frontier_limit", 15);
+  nh_->declare_parameter<float>("auto_explore_goal_reached_dist", 1.5);
+  nh_->declare_parameter<float>("auto_explore_goal_timeout_sec", 30.0);
+  nh_->declare_parameter<int>("auto_explore_visited_memory_size", 10);
+  nh_->declare_parameter<float>("auto_explore_info_gain_weight", 1.0);
+  nh_->declare_parameter<float>("auto_explore_path_cost_weight", 0.5);
+  nh_->declare_parameter<float>("auto_explore_direction_weight", 0.3);
   nh_->declare_parameter<std::string>("world_frame", "map");
   
   // Get parameters
@@ -575,6 +603,12 @@ void FARMaster::LoadROSParams() {
   nh_->get_parameter("auto_explore_min_goal_separation", master_params_.auto_explore_min_goal_separation);
   nh_->get_parameter("auto_explore_stop_when_completed", master_params_.auto_explore_stop_when_completed);
   nh_->get_parameter("auto_explore_no_frontier_limit", master_params_.auto_explore_no_frontier_limit);
+  nh_->get_parameter("auto_explore_goal_reached_dist", master_params_.auto_explore_goal_reached_dist);
+  nh_->get_parameter("auto_explore_goal_timeout_sec", master_params_.auto_explore_goal_timeout_sec);
+  nh_->get_parameter("auto_explore_visited_memory_size", master_params_.auto_explore_visited_memory_size);
+  nh_->get_parameter("auto_explore_info_gain_weight", master_params_.auto_explore_info_gain_weight);
+  nh_->get_parameter("auto_explore_path_cost_weight", master_params_.auto_explore_path_cost_weight);
+  nh_->get_parameter("auto_explore_direction_weight", master_params_.auto_explore_direction_weight);
   nh_->get_parameter<std::string>("world_frame", master_params_.world_frame);
   master_params_.terrain_range = std::min(master_params_.terrain_range, master_params_.sensor_range);
 
@@ -582,8 +616,14 @@ void FARMaster::LoadROSParams() {
     master_params_.auto_explore_no_frontier_limit = 1;
   }
 
-  auto_explore_params_.min_frontier_dist = master_params_.auto_explore_min_frontier_dist;
-  auto_explore_params_.min_goal_separation = master_params_.auto_explore_min_goal_separation;
+  auto_explore_params_.min_frontier_dist       = master_params_.auto_explore_min_frontier_dist;
+  auto_explore_params_.min_goal_separation     = master_params_.auto_explore_min_goal_separation;
+  auto_explore_params_.goal_reached_dist       = master_params_.auto_explore_goal_reached_dist;
+  auto_explore_params_.goal_timeout_sec        = master_params_.auto_explore_goal_timeout_sec;
+  auto_explore_params_.visited_memory_size     = master_params_.auto_explore_visited_memory_size;
+  auto_explore_params_.info_gain_weight        = master_params_.auto_explore_info_gain_weight;
+  auto_explore_params_.path_cost_weight        = master_params_.auto_explore_path_cost_weight;
+  auto_explore_params_.direction_weight        = master_params_.auto_explore_direction_weight;
 
   // print voxel_dim paramter in ROS2
   RCLCPP_INFO(nh_->get_logger(), "voxel_dim: %f", master_params_.voxel_dim);

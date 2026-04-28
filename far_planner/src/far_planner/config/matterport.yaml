@@ -21,6 +21,12 @@ far_planner:
     auto_explore_min_goal_separation: 0.5
     auto_explore_stop_when_completed: true
     auto_explore_no_frontier_limit: 10
+    auto_explore_goal_reached_dist: 1.0
+    auto_explore_goal_timeout_sec: 20.0
+    auto_explore_visited_memory_size: 10
+    auto_explore_info_gain_weight: 1.0
+    auto_explore_path_cost_weight: 0.5
+    auto_explore_direction_weight: 0.3
     world_frame: map
 
     # Graph Messager

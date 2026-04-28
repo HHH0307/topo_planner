@@ -35,6 +35,12 @@ struct FARMasterParams {
     float auto_explore_min_goal_separation;
     bool  auto_explore_stop_when_completed;
     int   auto_explore_no_frontier_limit;
+    float auto_explore_goal_reached_dist;
+    float auto_explore_goal_timeout_sec;
+    int   auto_explore_visited_memory_size;
+    float auto_explore_info_gain_weight;
+    float auto_explore_path_cost_weight;
+    float auto_explore_direction_weight;
     std::string world_frame;
 };
 

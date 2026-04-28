@@ -17,10 +17,16 @@ far_planner:
     is_debug_output: false
     is_attempt_autoswitch: true  # Auto switch to attemptable navigation
     is_enable_auto_explore: false
-    auto_explore_min_frontier_dist: 2.0
-    auto_explore_min_goal_separation: 1.0
+    auto_explore_min_frontier_dist: 2.0       # 前沿节点距机器人最小距离 (m)
+    auto_explore_min_goal_separation: 1.0     # 新目标与上一目标最小间隔 (m)
     auto_explore_stop_when_completed: true
-    auto_explore_no_frontier_limit: 15
+    auto_explore_no_frontier_limit: 15        # 连续找不到前沿的次数上限，达到则停止探索
+    auto_explore_goal_reached_dist: 1.5       # 判定到达目标的距离阈值 (m)
+    auto_explore_goal_timeout_sec: 30.0       # 单个目标最大导航时间 (s)，超时自动切换
+    auto_explore_visited_memory_size: 10      # 已访问目标黑名单窗口大小
+    auto_explore_info_gain_weight: 1.0        # 信息增益权重（邻近前沿节点数）
+    auto_explore_path_cost_weight: 0.5        # 路径可达性权重
+    auto_explore_direction_weight: 0.3        # 方向多样性权重（减少来回振荡）
     world_frame: map
 
     # Graph Messager
