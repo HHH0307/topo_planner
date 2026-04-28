@@ -12,6 +12,11 @@
 #include "graph_msger.h"
 #include "auto_explore.h"
 
+// ── 通用拓扑图构建策略 ──────────────────────────────────────────────
+#include "topo_graph_builder.h"
+#include "visibility_graph_builder.h"
+#include "voronoi_graph_builder.h"
+
 
 struct FARMasterParams {
     FARMasterParams() = default;
@@ -42,6 +47,8 @@ struct FARMasterParams {
     float auto_explore_path_cost_weight;
     float auto_explore_direction_weight;
     std::string world_frame;
+    // ── 通用拓扑图构建策略选择 ──────────────────────────────────────
+    TopoBuilderType topo_builder_type = TopoBuilderType::VISIBILITY_GRAPH;
 };
 
 class FARMaster
@@ -124,16 +131,21 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
     /* module objects */
-    ContourDetector contour_detector_;
+    ContourDetector contour_detector_;   // kept for legacy / OpenCV debug
     DynamicGraph graph_manager_;
     DPVisualizer planner_viz_;
     GraphPlanner graph_planner_;
-    ContourGraph contour_graph_;
+    ContourGraph contour_graph_;         // kept for collision checks in visibility mode
     MapHandler map_handler_;
     ScanHandler scan_handler_;
     GraphMsger graph_msger_;
     AutoExplore auto_explore_;
     AutoExploreParams auto_explore_params_;
+
+    // ── 通用拓扑图构建策略（运行时多态） ──────────────────────────────
+    std::unique_ptr<TopoGraphBuilder>    topo_builder_;
+    std::unique_ptr<VisibilityGraphBuilder> vis_builder_;   // 复用以访问碰撞检测
+    std::unique_ptr<VoronoiGraphBuilder>    vor_builder_;
 
     /* ROS Params */
     FARMasterParams     master_params_;
@@ -144,6 +156,7 @@ private:
     MapHandlerParams    map_params_;
     ScanHandlerParams   scan_params_;
     GraphMsgerParams    msger_parmas_;
+    VoronoiBuilderParams vor_params_;
 
     void LoadROSParams();
 

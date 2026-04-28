@@ -16,6 +16,11 @@ far_planner:
     is_pub_boundary: false
     is_debug_output: false
     is_attempt_autoswitch: true  # Auto switch to attemptable navigation
+
+    # ── 通用拓扑图构建策略 ──────────────────────────────────────────
+    # 0 = VISIBILITY_GRAPH (FAR Planner 原始可见性图, 默认)
+    # 1 = VORONOI_GRAPH    (Voronoi 骨架图, 路径远离障碍物更安全)
+    topo_builder_type: 0
     is_enable_auto_explore: false
     auto_explore_min_frontier_dist: 2.0       # 前沿节点距机器人最小距离 (m)
     auto_explore_min_goal_separation: 1.0     # 新目标与上一目标最小间隔 (m)
@@ -67,3 +72,11 @@ far_planner:
     g_planner/free_counter_thred: 7
     g_planner/reach_goal_vote_size: 3
     g_planner/path_momentum_thred: 3
+
+    # ── Voronoi Graph Builder Params (当 topo_builder_type: 1 时生效) ────
+    voronoi/sensor_range: 15.0      # 骨架计算半径 (m)，建议 <= terrain_range
+    voronoi/voxel_dim: 0.3          # 骨架搜索网格分辨率 (m)
+    voronoi/robot_clearance: 0.45   # 骨架点到障碍物最小距离 (m)
+    voronoi/cluster_radius: 1.5     # 候选点聚类半径 (m)，避免骨架过密
+    voronoi/min_dist_to_obs: 0.45   # 骨架候选点到障碍物最小距离 (m)
+    voronoi/neighbor_window: 2      # 局部最大值检测窗口（格数）

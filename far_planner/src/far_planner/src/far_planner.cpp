@@ -83,6 +83,26 @@ void FARMaster::Init() {
   graph_msger_.Init(nh_, msger_parmas_);
   auto_explore_.Init(auto_explore_params_);
 
+  // ── 初始化拓扑图构建策略 ──────────────────────────────────────────
+  if (master_params_.topo_builder_type == TopoBuilderType::VORONOI_GRAPH) {
+    RCLCPP_INFO(nh_->get_logger(), "TopoPlanner: using VORONOI_GRAPH strategy.");
+    vor_builder_ = std::make_unique<VoronoiGraphBuilder>();
+    vor_builder_->SetParams(vor_params_);
+    vor_builder_->SetMapHandlerRef(&map_handler_);
+    vor_builder_->Init(nh_);
+    topo_builder_ = std::move(vor_builder_);
+  } else {
+    RCLCPP_INFO(nh_->get_logger(), "TopoPlanner: using VISIBILITY_GRAPH strategy.");
+    vis_builder_ = std::make_unique<VisibilityGraphBuilder>();
+    VisibilityBuilderParams vbp;
+    vbp.cdetect_params = cdetect_params_;
+    vbp.cg_params      = cg_params_;
+    vis_builder_->SetParams(vbp);
+    vis_builder_->SetMapHandlerRef(&map_handler_);
+    vis_builder_->Init(nh_);
+    topo_builder_ = std::move(vis_builder_);
+  }
+
   //print processing objects init complete
   RCLCPP_INFO(nh_->get_logger(), "FAR Planner Processing Objects Initiated");
 
@@ -158,6 +178,7 @@ void FARMaster::ResetEnvironmentAndGraph() {
   map_handler_.ResetGripMapCloud();
   graph_planner_.ResetPlannerInternalValues();
   contour_graph_.ResetCurrentContour();
+  if (topo_builder_) topo_builder_->Reset();
   /* Reset clouds */
   FARUtil::surround_obs_cloud_->clear();
   FARUtil::surround_free_cloud_->clear();
@@ -195,23 +216,26 @@ void FARMaster::MainLoopCallBack() {
     RCLCPP_WARN(nh_->get_logger(),"FAR: Waiting for Odometry...");
     return;
   }
-  /* Extract Vertices and new nodes */
+  /* ── Extract Vertices and new nodes via pluggable topo builder ── */
   FARUtil::Timer.start_time("Total V-Graph Update");
-  contour_detector_.BuildTerrainImgAndExtractContour(odom_node_ptr_, FARUtil::surround_obs_cloud_, realworld_contour_);
-  contour_graph_.UpdateContourGraph(odom_node_ptr_, realworld_contour_);
+  topo_builder_->BuildTopoNodes(odom_node_ptr_, FARUtil::surround_obs_cloud_,
+                                new_ctnodes_, realworld_contour_);
   if (is_graph_init_) {
     if (!FARUtil::IsDebug) printf("\033[2K");
-    std::cout<<"    "<<"Local V-Graph Updated. Number of local vertices: "<<ContourGraph::contour_graph_.size()<<std::endl;
+    std::cout<<"    "<<"Local Topo-Graph Updated. Number of local nodes: "
+             <<topo_builder_->GetCurrentCTNodes().size()<<std::endl;
   }
   /* Adjust heights with terrain */
-  map_handler_.AdjustCTNodeHeight(ContourGraph::contour_graph_);
+  topo_builder_->AdjustCTNodeHeight(topo_builder_->GetCurrentCTNodes());
   map_handler_.AdjustNodesHeight(nav_graph_);
   // Truncate for local range nodes
   graph_manager_.UpdateGlobalNearNodes();
   near_nav_graph_ = graph_manager_.GetExtendLocalNode();
-  // Match near nav nodes with contour
-  contour_graph_.MatchContourWithNavGraph(nav_graph_, near_nav_graph_, new_ctnodes_);
-  if (master_params_.is_visual_opencv) {
+  // Match near nav nodes with topo structure
+  topo_builder_->MatchWithNavGraph(nav_graph_, near_nav_graph_, new_ctnodes_);
+  // OpenCV debug visualization (visibility graph only)
+  if (master_params_.is_visual_opencv &&
+      master_params_.topo_builder_type == TopoBuilderType::VISIBILITY_GRAPH) {
     FARUtil::ConvertCTNodeStackToPCL(new_ctnodes_, new_vertices_ptr_);
     cv::Mat cloud_img = contour_detector_.GetCloudImgMat();
     contour_detector_.ShowCornerImage(cloud_img, new_vertices_ptr_);
@@ -223,27 +247,26 @@ void FARMaster::MainLoopCallBack() {
   }
   if (is_graph_init_) {
     if (!FARUtil::IsDebug) printf("\033[2K");
-    std::cout<<"    "<< "Number of new vertices adding to global V-Graph: "<< new_nodes_.size()<<std::endl;
+    std::cout<<"    "<< "Number of new vertices adding to global Topo-Graph: "<< new_nodes_.size()<<std::endl;
   }
   /* Graph Updating */
   graph_manager_.UpdateNavGraph(new_nodes_, is_stop_update_, clear_nodes_);
 
   runtimer_.data = FARUtil::Timer.end_time("Total V-Graph Update", is_graph_init_) / 1000.f; // Unit: second
-  // runtimer_.data = FARUtil::Timer.end_time("Total V-Graph Update", is_graph_init_); // Unit: ms
   runtime_pub_->publish(runtimer_);
 
   /* Update v-graph in other modules */
   nav_graph_ = graph_manager_.GetNavGraph();
   if (is_graph_init_) {
     if (!FARUtil::IsDebug) printf("\033[2K");
-    std::cout<<"    "<<"Global V-Graph Updated. Number of global vertices: "<<nav_graph_.size()<<std::endl;
+    std::cout<<"    "<<"Global Topo-Graph Updated. Number of global vertices: "<<nav_graph_.size()<<std::endl;
   }
-  contour_graph_.ExtractGlobalContours();      // Global Polygon Update
+  topo_builder_->ExtractGlobalStructure();     // Global structure update (polygons / skeleton)
   graph_planner_.UpdaetVGraph(nav_graph_);     // Graph Planner Update
   graph_msger_.UpdateGlobalGraph(nav_graph_);  // Graph Messager Update
 
   /* Publish local boundary to lower level local planner */
-  this->LocalBoundaryHandler(ContourGraph::local_boundary_);
+  this->LocalBoundaryHandler(topo_builder_->GetLocalBoundary());
 
   /* Viz Navigation Graph */
   const NavNodePtr last_internav_ptr = graph_manager_.GetLastInterNavNode();
@@ -254,8 +277,9 @@ void FARMaster::MainLoopCallBack() {
   planner_viz_.VizNodes(graph_manager_.GetOutContourNodes(), "out_contour", VizColor::YELLOW);
   planner_viz_.VizPoint3D(FARUtil::free_odom_p, "free_odom_position", VizColor::ORANGE, 1.0);
   planner_viz_.VizGraph(nav_graph_);
-  planner_viz_.VizContourGraph(ContourGraph::contour_graph_);
-  planner_viz_.VizGlobalPolygons(ContourGraph::global_contour_, ContourGraph::unmatched_contour_);
+  planner_viz_.VizContourGraph(topo_builder_->GetCurrentCTNodes());
+  planner_viz_.VizGlobalPolygons(topo_builder_->GetGlobalContour(),
+                                 topo_builder_->GetUnmatchedContour());
 
   // publish nodes visualization
   planner_viz_.PubNodesVisualization();
@@ -581,6 +605,16 @@ void FARMaster::LoadROSParams() {
   nh_->declare_parameter<float>("auto_explore_path_cost_weight", 0.5);
   nh_->declare_parameter<float>("auto_explore_direction_weight", 0.3);
   nh_->declare_parameter<std::string>("world_frame", "map");
+  // ── 拓扑图构建策略选择 ──────────────────────────────────────────────
+  // 0 = VISIBILITY_GRAPH (default), 1 = VORONOI_GRAPH
+  nh_->declare_parameter<int>("topo_builder_type", 0);
+  // Voronoi builder specific params
+  nh_->declare_parameter<float>("voronoi/sensor_range", 15.0);
+  nh_->declare_parameter<float>("voronoi/voxel_dim", 0.3);
+  nh_->declare_parameter<float>("voronoi/robot_clearance", 0.5);
+  nh_->declare_parameter<float>("voronoi/cluster_radius", 1.2);
+  nh_->declare_parameter<float>("voronoi/min_dist_to_obs", 0.4);
+  nh_->declare_parameter<int>("voronoi/neighbor_window", 2);
   
   // Get parameters
   nh_->get_parameter("main_run_freq", master_params_.main_run_freq);
@@ -611,6 +645,26 @@ void FARMaster::LoadROSParams() {
   nh_->get_parameter("auto_explore_direction_weight", master_params_.auto_explore_direction_weight);
   nh_->get_parameter<std::string>("world_frame", master_params_.world_frame);
   master_params_.terrain_range = std::min(master_params_.terrain_range, master_params_.sensor_range);
+
+  // ── 拓扑图构建策略 ─────────────────────────────────────────────────
+  {
+    int topo_type_int = 0;
+    nh_->get_parameter("topo_builder_type", topo_type_int);
+    master_params_.topo_builder_type = (topo_type_int == 1) ?
+        TopoBuilderType::VORONOI_GRAPH : TopoBuilderType::VISIBILITY_GRAPH;
+  }
+  // Voronoi params
+  nh_->get_parameter("voronoi/sensor_range",    vor_params_.sensor_range);
+  nh_->get_parameter("voronoi/voxel_dim",        vor_params_.voxel_dim);
+  nh_->get_parameter("voronoi/robot_clearance",  vor_params_.robot_clearance);
+  nh_->get_parameter("voronoi/cluster_radius",   vor_params_.cluster_radius);
+  nh_->get_parameter("voronoi/min_dist_to_obs",  vor_params_.min_dist_to_obs);
+  nh_->get_parameter("voronoi/neighbor_window",  vor_params_.neighbor_window);
+  // Sync Voronoi sensor_range with master if not overridden
+  if (vor_params_.sensor_range <= 0.1f)
+    vor_params_.sensor_range = master_params_.terrain_range;
+  if (vor_params_.robot_clearance <= 0.01f)
+    vor_params_.robot_clearance = master_params_.robot_dim / 2.0f;
 
   if (master_params_.auto_explore_no_frontier_limit < 1) {
     master_params_.auto_explore_no_frontier_limit = 1;
